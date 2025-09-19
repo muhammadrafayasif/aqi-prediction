@@ -6,6 +6,5 @@ requests
 protobuf
 six
 pyjwt
-re
 playwright
 dotenv
