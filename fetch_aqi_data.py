@@ -1,21 +1,20 @@
 from playwright.sync_api import sync_playwright
 import pandas as pd
 from dotenv import load_dotenv
-import re, os, hsfs
+import re, os, hopsworks
 
 load_dotenv()
 
 # Connect to Hopsworks data store
-connection = hsfs.connection(
-    host="c.app.hopsworks.ai",
-    port=443,
-    project="aqi_data",
-    api_key_value=os.getenv('API_KEY')
+project = hopsworks.login(
+    api_key_value=os.getenv("API_KEY"),
+    project='aqiData',
+    host='c.app.hopsworks.ai'
 )
 
-
-feature_store = connection.get_feature_store()
-fg = feature_store.get_feature_group(name="aqi_data", version=1)
+# Access your feature store
+fs = project.get_feature_store(name='aqidata_featurestore')
+fg = fs.get_feature_group(name="aqi_data", version=1)
 
 with sync_playwright() as p:
     browser = p.firefox.launch(headless=True)
