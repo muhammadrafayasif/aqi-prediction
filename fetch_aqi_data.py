@@ -47,7 +47,7 @@ with sync_playwright() as p:
     
     # Converting Fahrenheit to Celcius
     F = float(TEMP.inner_text().split('°')[0])
-    data['temp'] = float((F - 32) * 5 / 9)
+    data['temp'] = round( float((F - 32) * 5 / 9), 1)
 
     # Add pollutant data to the new dataframe
     for n, i in enumerate(range(1, 12, 2)):
