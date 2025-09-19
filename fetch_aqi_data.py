@@ -44,7 +44,10 @@ with sync_playwright() as p:
     # Add current temperature to the new dataframe
     TEMP = page.locator('.header-temp').first
     TEMP.wait_for(state='attached')
-    data['temp'] = float(TEMP.inner_text().replace('°C', ''))
+    
+    # Converting Fahrenheit to Celcius
+    F = float(TEMP.inner_text().split('°')[0])
+    data['temp'] = float((F - 32) * 5 / 9)
 
     # Add pollutant data to the new dataframe
     for n, i in enumerate(range(1, 12, 2)):
