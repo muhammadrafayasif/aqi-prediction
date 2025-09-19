@@ -27,7 +27,7 @@ runs:
 
     - name: Execute python script
       env:
-        API_KEY: "{{secrets.API_KEY}}"
+        API_KEY: "${{ secrets.API_KEY }}"
       run: |
         python "$GITHUB_ACTION_PATH/fetch_aqi_data.py"
       shell: bash
