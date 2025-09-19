@@ -13,3 +13,5 @@ jobs:
 
       - name: Run python script
         uses: ./
+        with:
+          API_KEY: ${{ secrets.API_KEY }}
