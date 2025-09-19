@@ -1,0 +1,33 @@
+name: "Fetch AQI Data"
+description: "Fetches AQI data from AccuWeather along with weather and pollutant data. Then stores data in Hopsworks feature store."
+author: "Muhammad Rafay"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Cache pip
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install playwright, pandas, hsfs
+        playwright install chromium
+      shell: bash
+
+    - name: Execute python script
+      env:
+        API_KEY: "{{secrets.API_KEY}}"
+      run: |
+        python "$GITHUB_ACTION_PATH/fetch_aqi_data.py"
+      shell: bash
