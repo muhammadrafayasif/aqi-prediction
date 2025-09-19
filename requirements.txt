@@ -1,0 +1,11 @@
+hsfs>=3.0.0
+pyarrow
+pandas
+numpy
+requests
+protobuf
+six
+pyjwt
+re
+playwright
+dotenv
