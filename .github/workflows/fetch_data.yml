@@ -20,7 +20,7 @@ jobs:
         with:
           API_KEY: ${{ secrets.API_KEY }}
 
-      - name: Commit updated badges
+      - name: Add data to csv file
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
