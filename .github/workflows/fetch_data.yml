@@ -1,0 +1,15 @@
+name: Add AQI data to Feature Store
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  append-aqi-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Run python script
+        uses: ./
