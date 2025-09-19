@@ -14,7 +14,7 @@ connection = hsfs.connection(
 )
 
 
-feature_store = connection.get_feature_store()
+feature_store = connection.get_feature_store(name="aqidata_featurestore")
 fg = feature_store.get_feature_group(name="aqi_data", version=1)
 
 with sync_playwright() as p:
