@@ -1,4 +1,4 @@
-hsfs>=3.0.0
+hsfs[python]>=3.0.0
 pyarrow
 pandas
 numpy
