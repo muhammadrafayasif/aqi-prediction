@@ -68,16 +68,24 @@ with sync_playwright() as p:
 
     for n, i in enumerate(cards):
 
-        # Convert from in to mb (international standard) for pressure
-        if weather[n] != 'pressure_mb':
-            data[weather[n]] = round(float(re.findall(r'\d+', i)[0]), 1)
-        else:
+        # Convert from in to mb (international standard) for pressure and mph to km/h
+        # Converting imperial units to metric units
+        if weather[n] == 'pressure_mb':
             MAGNITUDE = float(i.split()[2::][0])
             UNIT = i.split()[2::][1]
             if UNIT == 'in':
                 data[weather[n]] = round(MAGNITUDE * 33.8639, 1)
             else:
                 data[weather[n]] = round(MAGNITUDE, 1)
+        elif weather[n] == 'wind_speed_km':
+            MAGNITUDE = float(i.split()[2])
+            UNIT = i.split()[3]
+            if UNIT == 'km/h':
+                data[weather[n]] = round(MAGNITUDE, 1)
+            else:
+                data[weather[n]] = round(MAGNITUDE * 1.609, 1)
+        else:
+            data[weather[n]] = round(float(re.findall(r'\d+', i)[0]), 1)
 
     # Convert python dictionary to Pandas DataFrame
     row = pd.DataFrame([data])
