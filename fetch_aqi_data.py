@@ -64,21 +64,27 @@ with sync_playwright() as p:
         data['temp'] = round(MAGNITUDE, 1)
     
     # Getting only the wind speed, humidity percentage and pressure (in mb)
-    print([(i, n) for n, i in enumerate(cards)])
-    print()
-
     cards = [ cards[4], cards[5], cards[8] ]
+
     for n, i in enumerate(cards):
-        data[weather[n]] = float(re.findall(r'\d+', i)[0])
+
+        # Convert from in to mb (international standard) for pressure
+        if weather[n] != 'pressure_mb':
+            data[weather[n]] = round(float(re.findall(r'\d+', i)[0]), 1)
+        else:
+            MAGNITUDE = float(i.split()[2::][0])
+            UNIT = i.split()[2::][1]
+            if UNIT == 'in':
+                data[weather[n]] = round(MAGNITUDE * 33.8639, 1)
+            else:
+                data[weather[n]] = round(MAGNITUDE, 1)
 
     # Convert python dictionary to Pandas DataFrame
     row = pd.DataFrame([data])
 
     # Append data to CSV file
-    # with open('aqi-data.csv', 'a') as f:
-    #     row = ','.join(str(value) for value in data.values())
-    #     f.write('\n'+row)
-
-    print(data)
+    with open('aqi-data.csv', 'a') as f:
+        row = ','.join(str(value) for value in data.values())
+        f.write('\n'+row)
 
     browser.close()
