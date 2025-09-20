@@ -63,7 +63,10 @@ with sync_playwright() as p:
     else:
         data['temp'] = round(MAGNITUDE, 1)
     
-    # Getting only the wind speed, humidity % and pressure (in mb)
+    # Getting only the wind speed, humidity percentage and pressure (in mb)
+    print([(i, n) for n, i in enumerate(cards)])
+    print()
+
     cards = [ cards[4], cards[5], cards[8] ]
     for n, i in enumerate(cards):
         data[weather[n]] = float(re.findall(r'\d+', i)[0])
@@ -72,8 +75,10 @@ with sync_playwright() as p:
     row = pd.DataFrame([data])
 
     # Append data to CSV file
-    with open('aqi-data.csv', 'a') as f:
-        row = ','.join(str(value) for value in data.values())
-        f.write('\n'+row)
+    # with open('aqi-data.csv', 'a') as f:
+    #     row = ','.join(str(value) for value in data.values())
+    #     f.write('\n'+row)
+
+    print(data)
 
     browser.close()
