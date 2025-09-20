@@ -1,9 +1,6 @@
 from playwright.sync_api import sync_playwright
 import pandas as pd
-from dotenv import load_dotenv
 import re, time
-
-load_dotenv()
 
 with sync_playwright() as p:
     browser = p.firefox.launch(headless=True)
@@ -41,28 +38,12 @@ with sync_playwright() as p:
     AQI.wait_for(state='attached')
     data['aqi'] = float(AQI.inner_text())
 
-    # Add current temperature to the new dataframe
-    TEMP = page.locator('.header-temp').first
-    TEMP.wait_for(state='attached')
-    
-    # Converting Fahrenheit to Celcius
-    F = float(TEMP.inner_text().split('°')[0])
-    data['temp'] = round( float((F - 32) * 5 / 9), 1)
-
     # Add pollutant data to the new dataframe
     for n, i in enumerate(range(1, 12, 2)):
         pollutant = page.locator('.pollutant-concentration').nth(i)
         pollutant.wait_for(state='attached')
 
-        # According to AQI standards, CO must be in ppm
-        # AccWeather provides CO in ug/(m^3), which is converted to ppm through a formula
-        data[names[n]] = round(float(
-
-            float(pollutant.inner_text().split()[0])
-                            *
-            (1 if names[n]!='CO' else 24.45 / (1000 * 28.01))
-
-        ), 3)
+        data[names[n]] = float(pollutant.inner_text().split()[0])
 
     # Go to weather forecasts page to access weather data
     page.goto(
@@ -71,15 +52,26 @@ with sync_playwright() as p:
 
     cards = page.locator('.detail-item.spaced-content').all_inner_texts()
     weather = ['wind_speed_km', 'humidity_percent', 'pressure_mb']
+
+    # Add temperature data to the new dataframe
+    TEMP = page.locator('.display-temp').first
+    TEMP.wait_for(state='attached')
+    UNIT = TEMP.inner_text().split('°')[1]
+    MAGNITUDE = float(TEMP.inner_text().split('°')[0])
+    if UNIT == 'F':
+        data['temp'] = round((MAGNITUDE-32) * 5/9 , 1)
+    else:
+        data['temp'] = round(MAGNITUDE, 1)
     
     # Getting only the wind speed, humidity % and pressure (in mb)
-    cards = [ cards[2], cards[3], cards[6] ]
+    cards = [ cards[4], cards[5], cards[8] ]
     for n, i in enumerate(cards):
         data[weather[n]] = float(re.findall(r'\d+', i)[0])
 
     # Convert python dictionary to Pandas DataFrame
     row = pd.DataFrame([data])
 
+    # Append data to CSV file
     with open('aqi-data.csv', 'a') as f:
         row = ','.join(str(value) for value in data.values())
         f.write('\n'+row)
