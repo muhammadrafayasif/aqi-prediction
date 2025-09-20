@@ -64,7 +64,7 @@ with sync_playwright() as p:
         data['temp'] = round(MAGNITUDE, 1)
     
     # Getting only the wind speed, humidity percentage and pressure (in mb)
-    cards = [ cards[4], cards[5], cards[8] ]
+    cards = [ cards[n] for n, i in enumerate(cards) if 'Wind Gusts' in i or 'Indoor Humidity' in i or 'Pressure' in i ]
 
     for n, i in enumerate(cards):
 
