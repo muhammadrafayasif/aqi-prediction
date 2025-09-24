@@ -1,3 +1,4 @@
+hopsworks
 pandas
 playwright
 dotenv

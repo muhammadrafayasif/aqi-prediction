@@ -1,4 +1,4 @@
-name: Add AQI data to Feature Store
+name: Add Data to Feature Store
 
 on:
   schedule:
@@ -19,13 +19,3 @@ jobs:
         uses: ./
         with:
           API_KEY: ${{ secrets.API_KEY }}
-
-      - name: Add data to csv file
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add aqi-data.csv
-          git commit -m "Update aqi-data.csv" || echo "No changes to commit"
-          git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

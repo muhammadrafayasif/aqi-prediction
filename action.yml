@@ -1,4 +1,4 @@
-name: "Fetch AQI Data"
+name: "Fetch Features"
 description: "Fetches AQI data from AccuWeather along with weather and pollutant data. Then stores data in Hopsworks feature store."
 author: "Muhammad Rafay"
 
