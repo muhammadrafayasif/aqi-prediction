@@ -24,10 +24,15 @@ fg = fs.get_or_create_feature_group(
 with sync_playwright() as p:
     browser = p.firefox.launch(headless=True)
 
-    # We set our locale to en-GB to prevent GitHub from using imperial units
-    context = browser.new_context(locale="en-GB")
+    page = browser.new_page()
+    
+    # Convert units from imperial to metric system
+    page.goto(
+        'https://www.accuweather.com/en/settings',
+    )
+    page.select_option("select#unit", "C")
 
-    page = context.new_page()
+
     page.goto(
         'https://www.accuweather.com/en/pk/karachi/261158/air-quality-index/261158',
     )
