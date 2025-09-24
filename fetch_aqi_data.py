@@ -9,7 +9,7 @@ load_dotenv()
 
 # Login to HopsWorks and get our feature store
 project = hopsworks.login(
-    api_key_value = os.getenv('HOPSWORKS_API_KEY')
+    api_key_value = os.getenv('API_KEY')
 )
 fs = project.get_feature_store()
 
