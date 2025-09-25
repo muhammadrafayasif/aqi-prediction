@@ -79,8 +79,6 @@ with sync_playwright() as p:
         'https://www.accuweather.com/en/pk/karachi/261158/current-weather/261158'
     )
 
-    weather = ['wind_speed', 'wind_gusts', 'humidity_percent', 'dew_point', 'pressure', 'cloud_cover', 'visibility']
-
     # Add temperature data to the new dataframe
     TEMP = page.locator('.display-temp').first
     TEMP.wait_for(state='attached')
@@ -91,8 +89,19 @@ with sync_playwright() as p:
     cards = page.locator('.detail-item.spaced-content').all_inner_texts()
     
     # Only getting the required features we need, the following are not needed for our model
-    exclude = ["RealFeel", "Indoor Humidity", "Cloud Ceiling"]
+    exclude = ['UV Index', 'RealFeel', 'Indoor Humidity', 'Cloud Ceiling']
     cards = [ cards[n] for n, i in enumerate(cards) if not any(k in i for k in exclude)]
+
+    # Getting weather data from the website and filtering any noise
+    weather = [
+        'wind_speed',
+        'wind_gusts',
+        'humidity_percent',
+        'dew_point',
+        'pressure',
+        'cloud_cover',
+        'visibility'
+    ]
 
     for n, i in enumerate(cards):
         data[weather[n]] = round(float(re.findall(r'\d+', i)[0]), 1)
