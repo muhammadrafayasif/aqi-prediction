@@ -26,7 +26,7 @@ runs:
     - name: Install dependencies
       run: |
         pip install --upgrade pip
-        pip install -r training_requirements.txt
+        pip install -r "$GITHUB_ACTION_PATH/training_requirements.txt"
       shell: bash
 
     - name: Train model and store in registry

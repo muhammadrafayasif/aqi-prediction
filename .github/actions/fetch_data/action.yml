@@ -26,7 +26,7 @@ runs:
     - name: Install dependencies
       run: |
         pip install --upgrade pip
-        pip install -r fetching_requirements.txt
+        pip install -r "$GITHUB_ACTION_PATH/fetching_requirements.txt"
         playwright install firefox
       shell: bash
 
