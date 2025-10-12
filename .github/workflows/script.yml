@@ -1,0 +1,23 @@
+name: Fetch Real-time Data and Train Model
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  model-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Fetch real-time data
+        uses: ./.github/actions/fetch_data
+        with:
+          API_KEY: ${{ secrets.API_KEY }}
+
+      - name: Train model
+        uses: ./.github/actions/train_model
+        with:
+          API_KEY: ${{ secrets.API_KEY }}

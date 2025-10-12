@@ -26,11 +26,11 @@ runs:
     - name: Install dependencies
       run: |
         pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install -r fetching_requirements.txt
         playwright install firefox
       shell: bash
 
-    - name: Execute python script
+    - name: Scrape AQI, weather data
       env:
         API_KEY: "${{ inputs.API_KEY }}"
       run: |
