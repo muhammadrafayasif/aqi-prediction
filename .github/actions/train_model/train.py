@@ -1,88 +1,95 @@
+import hopsworks, joblib, os
 import pandas as pd
-import numpy as np
 from dotenv import load_dotenv
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_absolute_error, mean_squared_error
-import warnings, hopsworks, os, joblib
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import train_test_split
 
-warnings.filterwarnings("ignore", category=FutureWarning)
-
-# === 1. Load and prepare data ===
 load_dotenv()
 
-# Login to HopsWorks and get our feature store
-project = hopsworks.login(
-    api_key_value = os.getenv('API_KEY')
-)
+# Connect to Hopsworks
+project = hopsworks.login(api_key_value=os.getenv("HOPSWORKS_API_KEY"))
 fs = project.get_feature_store()
 
-# Get or create a feature group containing our features for AQI prediction
-fg = fs.get_or_create_feature_group(
-    name="aqi_feature_pipeline",
-    version=1,
-    primary_key=["timestamp"],
-    description="A feature pipeline for storing AQI, environmental pollutants and weather data to the feature store."
-)
+# Load your AQI feature group
+feature_group = fs.get_or_create_feature_group(name="aqi_feature_pipeline", version=1)
+df = feature_group.read()
 
-df = fg.read()
+print("✅ Data loaded from Hopsworks:", df.shape)
 
-print("Number of hours:", len(df))
+# Feature Engineering
+
+# Ensure timestamp is datetime
 df["timestamp"] = pd.to_datetime(df["timestamp"])
 df = df.sort_values("timestamp").reset_index(drop=True)
 
-# === 2. Fill the 5-day outage gap ===
-full_range = pd.date_range(start=df["timestamp"].min(), end=df["timestamp"].max(), freq="H")
-df = df.set_index("timestamp").reindex(full_range)
-df.index.name = "timestamp"
-df = df.ffill().bfill()
+# Create AQI lag features (past 6 hours)
+for lag in range(1, 7):
+    df[f"aqi_lag_{lag}"] = df["aqi"].shift(lag)
 
-# === 3. Create lag features for time-series behavior ===
-target_col = "aqi"  # target variable
-num_lags = 6  # number of previous hours to use as predictors
+# Drop rows with missing lags
+df = df.dropna().reset_index(drop=True)
 
-for lag in range(1, num_lags + 1):
-    df[f"{target_col}_lag_{lag}"] = df[target_col].shift(lag)
+# Extract time-based features
+df["hour"] = df["timestamp"].dt.hour
+df["dayofweek"] = df["timestamp"].dt.dayofweek
 
-df = df.dropna()
+# Define features and target
+target_col = "aqi"
+drop_cols = ["timestamp", target_col]
 
-feature_cols = [col for col in df.columns if col != target_col]
-X = df[feature_cols]
+X = df.drop(columns=drop_cols)
 y = df[target_col]
 
-# === 4. Train-test split (chronological) ===
-split_idx = int(len(X) * 0.8)
-X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+# Train/Test split
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, shuffle=False
+)
 
-print(f"Training rows: {len(X_train)}, Testing rows: {len(X_test)}")
-
-# === 5. Scale features ===
+# Scale numeric features
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train)
 X_test_scaled = scaler.transform(X_test)
 
-# === 6. Train RandomForest model ===
-model = RandomForestRegressor(n_estimators=200, random_state=42)
-model.fit(X_train_scaled, y_train)
-
-# === 7. Evaluate ===
-y_pred = model.predict(X_test_scaled)
-mae = mean_absolute_error(y_test, y_pred)
-rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-print(f"MAE: {mae:.3f}, RMSE: {rmse:.3f}")
-
-# === 8. Save to Model Registry ===
-joblib.dump(model, "aqi_model.pkl")
-
-mr = project.get_model_registry()
-
-
-model_meta = mr.python.create_model(
-    name="aqi_predictor",
-    metrics={"mae": mae, "rmse": rmse},
-    description="RandomForest model for predicting Air Quality Index based on pollutants and weather data."
+# Train the model
+model = RandomForestRegressor(
+    n_estimators=200,
+    max_depth=12,
+    random_state=42,
+    n_jobs=-1
 )
 
-# Save the model artifact to Hopsworks
-model_meta.save("aqi_model.pkl")
+model.fit(X_train_scaled, y_train)
+print("Model training complete!")
+
+# Evaluate
+y_pred = model.predict(X_test_scaled)
+mae = mean_absolute_error(y_test, y_pred)
+mse = mean_squared_error(y_test, y_pred)
+r2 = r2_score(y_test, y_pred)
+
+print(f"\n📊 MAE: {mae:.2f} | MSE: {mse:.2f} | R²: {r2:.3f}\n")
+
+# Upload to Hopsworks Model Registry
+mr = project.get_model_registry()
+model_dir = "aqi_model_artifacts"
+import os
+
+os.makedirs(model_dir, exist_ok=True)
+joblib.dump(model, f"{model_dir}/model.pkl")
+joblib.dump(scaler, f"{model_dir}/scaler.pkl")
+
+# Save feature column names in the correct order
+feature_columns = list(X.columns)  # same X used for training
+joblib.dump(feature_columns, f"{model_dir}/feature_columns.pkl")
+print("Saved feature column order for API predictions.")
+
+model_meta = mr.python.create_model(
+    name="aqi_forecast_model",
+    metrics={"mae": mae, "mse": mse, "r2": r2},
+    description="Random Forest AQI forecasting model with lag features"
+)
+
+model_meta.save(model_dir)
+print("Model uploaded to Hopsworks successfully.")
