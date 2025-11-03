@@ -9,7 +9,7 @@ from sklearn.model_selection import train_test_split
 load_dotenv()
 
 # Connect to Hopsworks
-project = hopsworks.login(api_key_value=os.getenv("HOPSWORKS_API_KEY"))
+project = hopsworks.login(api_key_value=os.getenv("API_KEY"))
 fs = project.get_feature_store()
 
 # Load your AQI feature group
