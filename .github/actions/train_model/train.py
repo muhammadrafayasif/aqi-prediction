@@ -15,6 +15,7 @@ fs = project.get_feature_store()
 # Load your AQI feature group
 feature_group = fs.get_or_create_feature_group(name="aqi_feature_pipeline", version=1)
 df = feature_group.read()
+df = df.drop_duplicates()
 
 print("✅ Data loaded from Hopsworks:", df.shape)
 
