@@ -55,8 +55,11 @@ X_test_scaled = scaler.transform(X_test)
 
 # Train the model
 model = RandomForestRegressor(
-    n_estimators=200,
-    max_depth=12,
+    n_estimators=140,
+    max_depth=8,
+    min_samples_split=10,
+    min_samples_leaf=5,
+    max_features="sqrt",
     random_state=42,
     n_jobs=-1
 )

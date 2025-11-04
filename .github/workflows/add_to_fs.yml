@@ -1,4 +1,4 @@
-name: Fetch Real-time Data and Train Model
+name: Fetch Real-time Data
 
 on:
   schedule:

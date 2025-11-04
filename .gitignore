@@ -1,2 +1,6 @@
+# Environment variables
 .env
+
+# Local testing files (for experimenting with different models)
 test.py
+test_trains

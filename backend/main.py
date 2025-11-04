@@ -1,9 +1,18 @@
+from fastapi.middleware.cors import CORSMiddleware
 from datetime import timedelta
 from fastapi import FastAPI
 import os, hopsworks, joblib
 import pandas as pd
 
 app = FastAPI(title="AQI Forecast API", version="1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Connect to Hopsworks
 project = hopsworks.login(api_key_value=os.getenv("HOPSWORKS_API_KEY"))
@@ -38,7 +47,7 @@ def predict_aqi():
     future_predictions = []
     recent_rows = df.tail(6).copy()
 
-    for i in range(72):
+    for _ in range(72):
         input_row = recent_rows.iloc[-1:].copy()
 
         for lag in range(1, 7):
