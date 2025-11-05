@@ -16,8 +16,3 @@ jobs:
         uses: ./.github/actions/fetch_data
         with:
           API_KEY: ${{ secrets.API_KEY }}
-
-      - name: Train model
-        uses: ./.github/actions/train_model
-        with:
-          API_KEY: ${{ secrets.API_KEY }}
