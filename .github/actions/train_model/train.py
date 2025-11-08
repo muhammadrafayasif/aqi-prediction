@@ -1,99 +1,104 @@
-import hopsworks, joblib, os
+import joblib
+import hopsworks, os
 import pandas as pd
+import numpy as np
+import xgboost as xgb
 from dotenv import load_dotenv
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import train_test_split
+from sklearn.multioutput import MultiOutputRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 load_dotenv()
 
-# Connect to Hopsworks
 project = hopsworks.login(api_key_value=os.getenv("API_KEY"))
 fs = project.get_feature_store()
-
-# Load your AQI feature group
-feature_group = fs.get_or_create_feature_group(name="aqi_feature_pipeline", version=1)
-df = feature_group.read()
-df = df.drop_duplicates()
-
-print("✅ Data loaded from Hopsworks:", df.shape)
-
-# Feature Engineering
-
-# Ensure timestamp is datetime
+fg = fs.get_or_create_feature_group("aqi_feature_pipeline", version=1)
+df = fg.read()
 df["timestamp"] = pd.to_datetime(df["timestamp"])
+
 df = df.sort_values("timestamp").reset_index(drop=True)
 
-# Create AQI lag features (past 6 hours)
-for lag in range(1, 7):
-    df[f"aqi_lag_{lag}"] = df["aqi"].shift(lag)
+# Handle missing timestamps
+full_index = pd.date_range(start=df['timestamp'].min(), end=df['timestamp'].max(), freq='H')
+df = df.set_index('timestamp').reindex(full_index).rename_axis('timestamp').reset_index()
 
-# Drop rows with missing lags
+# Columns
+weather_cols = ['temp','wind_speed','wind_gusts','humidity_percent','dew_point','pressure',
+                'cloud_cover','visibility']
+pollutant_cols = ['pm_10','pm_2_5','no_2','o_3','so_2','co','aqi']
+
+# Interpolate weather features
+df[weather_cols] = df[weather_cols].interpolate(method='linear')
+
+# Fill pollutant features with forward fill
+df[pollutant_cols] = df[pollutant_cols].fillna(method='ffill')
+
+# Create lag features
+n_lags = 24  # past 24 hours
+for col in pollutant_cols + weather_cols:
+    for lag in range(1, n_lags+1):
+        df[f"{col}_lag{lag}"] = df[col].shift(lag)
+
+
+# Create rolling features
+for col in pollutant_cols + weather_cols:
+    df[f"{col}_roll3"] = df[col].rolling(window=3).mean()
+    df[f"{col}_roll6"] = df[col].rolling(window=6).mean()
+
+# Add time features
+df['hour'] = df['timestamp'].dt.hour
+df['day_of_week'] = df['timestamp'].dt.dayofweek
+df['is_weekend'] = df['day_of_week'].isin([5,6]).astype(int)
+
+# Drop rows with NaNs from lags
 df = df.dropna().reset_index(drop=True)
 
-# Extract time-based features
-df["hour"] = df["timestamp"].dt.hour
-df["dayofweek"] = df["timestamp"].dt.dayofweek
+# Prepare features and targets
+forecast_horizon = 72  # 72-hour prediction
 
-# Define features and target
-target_col = "aqi"
-drop_cols = ["timestamp", target_col]
+feature_cols = [col for col in df.columns if col not in ['timestamp','aqi']]
 
-X = df.drop(columns=drop_cols)
-y = df[target_col]
+X = []
+y = []
 
-# Train/Test split
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, shuffle=False
+for i in range(len(df) - forecast_horizon):
+    X.append(df[feature_cols].iloc[i].values)
+    y.append(df['aqi'].iloc[i:i+forecast_horizon].values)
+
+X = np.array(X)
+y = np.array(y)
+
+# Train/test split
+split = int(0.8 * len(X))
+X_train, X_test = X[:split], X[split:]
+y_train, y_test = y[:split], y[split:]
+
+# Train XGBoost MultiOutputRegressor
+xgb_reg = xgb.XGBRegressor(
+    n_estimators=500,
+    max_depth=6,
+    learning_rate=0.05,
+    objective='reg:squarederror',
+    random_state=42
 )
 
-# Scale numeric features
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
+model = MultiOutputRegressor(xgb_reg)
+model.fit(X_train, y_train)
 
-# Train the model
-model = RandomForestRegressor(
-    n_estimators=140,
-    max_depth=8,
-    min_samples_split=10,
-    min_samples_leaf=5,
-    max_features="sqrt",
-    random_state=42,
-    n_jobs=-1
-)
+# Make predictions and evaluate
+y_pred = model.predict(X_test)
 
-model.fit(X_train_scaled, y_train)
-print("Model training complete!")
-
-# Evaluate
-y_pred = model.predict(X_test_scaled)
-mae = mean_absolute_error(y_test, y_pred)
 mse = mean_squared_error(y_test, y_pred)
-r2 = r2_score(y_test, y_pred)
-
-print(f"\n📊 MAE: {mae:.2f} | MSE: {mse:.2f} | R²: {r2:.3f}\n")
+mae = mean_absolute_error(y_test, y_pred)
 
 # Upload to Hopsworks Model Registry
+joblib.dump(model, "xgboost_model.pkl")
 mr = project.get_model_registry()
-model_dir = "aqi_model_artifacts"
-import os
-
-os.makedirs(model_dir, exist_ok=True)
-joblib.dump(model, f"{model_dir}/model.pkl")
-joblib.dump(scaler, f"{model_dir}/scaler.pkl")
-
-# Save feature column names in the correct order
-feature_columns = list(X.columns)  # same X used for training
-joblib.dump(feature_columns, f"{model_dir}/feature_columns.pkl")
-print("Saved feature column order for API predictions.")
 
 model_meta = mr.python.create_model(
-    name="aqi_forecast_model",
-    metrics={"mae": mae, "mse": mse, "r2": r2},
-    description="Random Forest AQI forecasting model with lag features"
+    name="xgboost_aqi_forecast_model",
+    metrics={"mae": mae, "mse": mse},
+    description="XGBoost MultiOutputRegressor AQI forecasting model with lag features"
 )
+model_meta.save('xgboost_model.pkl')
 
-model_meta.save(model_dir)
 print("Model uploaded to Hopsworks successfully.")

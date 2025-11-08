@@ -1,5 +1,4 @@
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import timedelta
 from fastapi import FastAPI
 import os, hopsworks, joblib
 import pandas as pd
@@ -21,56 +20,62 @@ print("Connected to Hopsworks project.")
 
 # Load Model & Scaler
 model_registry = project.get_model_registry()
-models = model_registry.get_models("aqi_forecast_model")
+models = model_registry.get_models("xgboost_aqi_forecast_model")
 model_meta = max(models, key=lambda m: m.version)
 model_dir = model_meta.download()
-model = joblib.load(f"{model_dir}/model.pkl")
-scaler = joblib.load(f"{model_dir}/scaler.pkl")
-print("Model and scaler loaded successfully.")
+model = joblib.load(f"{model_dir}/xgboost_model.pkl")
+print("Model loaded successfully.")
 
 @app.get("/predict")
 def predict_aqi():
-    # Load latest dataset
-    feature_group = fs.get_or_create_feature_group(name="aqi_feature_pipeline", version=1)
-    df = feature_group.read()
-    df = df.sort_values(by="timestamp")
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    df = df.dropna(subset=["timestamp"])
-    df = df.ffill()
+    fg = fs.get_feature_group("aqi_feature_pipeline", version=1)
+    df = fg.read()
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df = df.sort_values("timestamp").reset_index(drop=True)
 
-    # Recreate lag features
-    for lag in range(1, 7):
-        df[f"aqi_lag_{lag}"] = df["aqi"].shift(lag)
-    df = df.dropna().reset_index(drop=True)
+    weather_cols = ['temp','wind_speed','wind_gusts','humidity_percent','dew_point','pressure',
+                'cloud_cover','visibility']
+    pollutant_cols = ['pm_10','pm_2_5','no_2','o_3','so_2','co','aqi']
+    all_cols = pollutant_cols + weather_cols
+    n_lags = 24
 
-    # Forecast 72 hours
-    future_predictions = []
-    recent_rows = df.tail(6).copy()
+    # Feature engineering
+    lag_arrays = []
+    for lag in range(1, n_lags+1):
+        lagged = df[all_cols].shift(lag)
+        lagged.columns = [f"{c}_lag{lag}" for c in all_cols]
+        lag_arrays.append(lagged)
+    lag_features = pd.concat(lag_arrays, axis=1)
 
-    for _ in range(72):
-        input_row = recent_rows.iloc[-1:].copy()
+    roll3 = df[all_cols].rolling(3).mean().add_suffix('_roll3')
+    roll6 = df[all_cols].rolling(6).mean().add_suffix('_roll6')
 
-        for lag in range(1, 7):
-            input_row[f"aqi_lag_{lag}"] = recent_rows["aqi"].iloc[-lag]
+    time_features = pd.DataFrame({
+        'hour': df['timestamp'].dt.hour,
+        'day_of_week': df['timestamp'].dt.dayofweek
+    })
+    time_features['is_weekend'] = time_features['day_of_week'].isin([5,6]).astype(int)
 
-        input_row["hour"] = input_row["timestamp"].dt.hour
-        input_row["dayofweek"] = input_row["timestamp"].dt.dayofweek
+    df_full = pd.concat([df, lag_features, roll3, roll6, time_features], axis=1).dropna().reset_index(drop=True)
 
-        # Scale input
-        X_scaled = scaler.transform(input_row.drop(columns=["timestamp", "aqi"], errors="ignore"))
+    # Prepare latest features
+    feature_cols = [col for col in df_full.columns if col not in ['timestamp','aqi']]
+    latest_features = df_full[feature_cols].iloc[-1].values.reshape(1, -1)
 
-        # Predict
-        predicted_aqi = model.predict(X_scaled)[0]
+    # Predict next 72 hours
+    future_aqi_pred = model.predict(latest_features).flatten()
 
-        # Next timestamp
-        next_timestamp = input_row["timestamp"].iloc[0] + timedelta(hours=1)
+    # Prepare timestamps
+    forecast_horizon = 72
+    future_timestamps = pd.date_range(
+        start=df_full['timestamp'].iloc[-1] + pd.Timedelta(hours=1),
+        periods=forecast_horizon,
+        freq='h'
+    )
 
-        future_predictions.append({"timestamp": next_timestamp.isoformat(), "predicted_aqi": round(predicted_aqi, 3)})
+    predictions_list = [
+        {"timestamp": str(ts), "aqi": float(aqi)}  # convert timestamp to string and aqi to float
+        for ts, aqi in zip(future_timestamps, future_aqi_pred)
+    ]
 
-        # Update recent rows for next iteration
-        new_row = input_row.copy()
-        new_row["timestamp"] = next_timestamp
-        new_row["aqi"] = predicted_aqi
-        recent_rows = pd.concat([recent_rows, new_row]).tail(6)
-
-    return {"predictions": future_predictions}
+    return {"predictions": predictions_list}
