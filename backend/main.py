@@ -23,8 +23,8 @@ try:
     
     # Load model from registry
     model_registry = project.get_model_registry()
-    model_meta = model_registry.get_model("aqi_forecast_xgboost", version=10)
-    # model_meta = max(models, key=lambda m: m.version)
+    models = model_registry.get_model("aqi_forecast_xgboost")
+    model_meta = max(models, key=lambda m: m.version)
     model_dir = model_meta.download()
     
     # Load model artifacts
