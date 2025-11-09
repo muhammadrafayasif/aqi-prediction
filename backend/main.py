@@ -1,6 +1,7 @@
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
 from warnings import simplefilter
+from datetime import datetime, timezone
 import os, hopsworks, joblib
 import pandas as pd
 import numpy as np
@@ -23,8 +24,9 @@ try:
     
     # Load model from registry
     model_registry = project.get_model_registry()
-    models = model_registry.get_model("aqi_forecast_xgboost")
+    models = model_registry.get_models("aqi_forecast_xgboost")
     model_meta = max(models, key=lambda m: m.version)
+    print(f'Loaded latest model: v{model_meta.version}')
     model_dir = model_meta.download()
     
     # Load model artifacts
@@ -41,20 +43,29 @@ except Exception as e:
     print(f"Error loading model: {e}")
     raise
 
-def prepare_features(df):
-    # Sort by timestamp
+def prepare_features(df, debug=False):
     df = df.sort_values("timestamp").reset_index(drop=True)
+    
+    if debug:
+        print(f"\n[DEBUG] Initial rows: {len(df)}")
+        print(f"[DEBUG] Date range: {df['timestamp'].min()} to {df['timestamp'].max()}")
 
-    # Detect gaps in the original data
+    # Detect gaps
     orig_time_diff = df["timestamp"].diff().dt.total_seconds().div(3600)
-    gap_mask_orig = orig_time_diff > 1
-    gap_start_timestamps = df.loc[gap_mask_orig, "timestamp"].tolist()
+    real_gaps = orig_time_diff > 2
+    gap_start_timestamps = df.loc[real_gaps, "timestamp"].tolist()
+    
+    if debug and gap_start_timestamps:
+        print(f"[DEBUG] Found {len(gap_start_timestamps)} real outages")
 
     # Reindex to a complete hourly range
     full_index = pd.date_range(start=df["timestamp"].min(), end=df["timestamp"].max(), freq="h")
     df_reindexed = df.set_index("timestamp").reindex(full_index).rename_axis("timestamp").reset_index()
+    
+    if debug:
+        print(f"[DEBUG] After reindexing: {len(df_reindexed)} rows")
 
-    # Mark where gaps start
+    # Mark where real gaps start
     df_reindexed["gap_flag"] = 0
     for ts in gap_start_timestamps:
         df_reindexed.loc[df_reindexed["timestamp"] == ts, "gap_flag"] = 1
@@ -80,14 +91,11 @@ def prepare_features(df):
     for col in pollutant_cols:
         df_reindexed[col] = np.clip(df_reindexed[col], 0, 500)
 
-    # Remove rows too close to gaps
-    n_lags = metadata["n_lags"]  # comes from your model_artifacts
-    df_reindexed["hours_since_gap"] = 9999
-    gap_indices = df_reindexed.index[df_reindexed["gap_flag"] == 1].tolist()
-    for gidx in gap_indices:
-        end_idx = min(gidx + n_lags, len(df_reindexed) - 1)
-        df_reindexed.loc[gidx:end_idx, "hours_since_gap"] = np.arange(0, end_idx - gidx + 1)
-    df_reindexed = df_reindexed[df_reindexed["hours_since_gap"] > n_lags].copy().reset_index(drop=True)
+    # Remove only rows with gaps
+    df_reindexed = df_reindexed[~(df_reindexed['gap_flag'] == 1)].copy().reset_index(drop=True)
+    
+    if debug:
+        print(f"[DEBUG] After gap filtering: {len(df_reindexed)} rows")
 
     df = df_reindexed
 
@@ -104,7 +112,7 @@ def prepare_features(df):
 
     # Lag features
     for col in all_cols:
-        for lag in range(1, n_lags + 1):
+        for lag in range(1, 13):  # n_lags = 12
             df[f"{col}_lag{lag}"] = df[col].shift(lag)
 
     # Rolling features (based on lags)
@@ -113,8 +121,20 @@ def prepare_features(df):
         df[f"{col}_roll6"] = df[[f"{col}_lag{i}" for i in range(1, 7)]].mean(axis=1)
         df[f"{col}_roll12"] = df[[f"{col}_lag{i}" for i in range(1, 13)]].mean(axis=1)
 
+    # Count NaNs before dropping
+    nan_count = df.isnull().sum().sum()
+    if debug:
+        print(f"[DEBUG] Total NaN values before dropping: {nan_count}")
+        print(f"[DEBUG] Rows with ANY NaN: {df.isnull().any(axis=1).sum()}")
+
     # Drop rows with any NaN from lag creation
+    df_before_drop = len(df)
     df = df.dropna().reset_index(drop=True)
+    
+    if debug:
+        print(f"[DEBUG] Rows before dropna: {df_before_drop}, after: {len(df)}")
+        if len(df) > 0:
+            print(f"[DEBUG] Last row timestamp: {df['timestamp'].iloc[-1]}")
     
     return df
 
@@ -134,24 +154,38 @@ def predict_aqi():
         # Connect to Hopsworks and load data
         project = hopsworks.login(api_key_value=os.getenv("HOPSWORKS_API_KEY"))
         fs = project.get_feature_store()
-        fg = fs.get_feature_group("aqi_feature_pipeline", version=1)
+        fg = fs.get_feature_group("aqi_feature_pipeline", version=2)
         df = fg.read()
         
         # Parse timestamp
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         
         # Prepare features
-        df_processed = prepare_features(df)
+        df_processed = prepare_features(df, debug=False)
         
         if len(df_processed) == 0:
-            raise HTTPException(status_code=400, detail="Not enough data to generate features")
+            raise HTTPException(status_code=400, detail="Not enough valid data after processing")
         
         # Get latest observation
         last_row = df_processed.iloc[-1]
         current_timestamp = last_row['timestamp']
         
-        # Prepare feature row
+        # Check data freshness (with online store, data should be < 3 hours old)
+        data_age = (datetime.now(timezone.utc) - pd.to_datetime(current_timestamp)).total_seconds() / 3600
+        
+        if data_age > 3:
+            print(f"[WARNING] Data is {data_age:.1f}h old, predictions may be unreliable")
+        
+        # Check for NaN in feature row
         feature_row = last_row[feature_cols].values.reshape(1, -1)
+        if pd.isna(feature_row).any():
+            nan_indices = np.where(np.isnan(feature_row[0]))[0]
+            nan_features = [feature_cols[i] for i in nan_indices]
+            raise HTTPException(status_code=400, detail=f"NaN values in features: {nan_features}")
+        
+        print(f"[PREDICT] Using timestamp: {current_timestamp}")
+        print(f"[PREDICT] Data age: {data_age:.2f}h")
+        print(f"[PREDICT] Feature shape: {feature_row.shape}")
         
         # Get predictions from each horizon model
         models = model_artifacts['models']
@@ -161,19 +195,17 @@ def predict_aqi():
             pred = models[horizon].predict(feature_row)[0]
             pred = np.clip(pred, 0, 500)
             horizon_predictions[horizon] = float(pred)
+            print(f"[PREDICT] Horizon {horizon}h: {pred:.2f}")
         
         # Interpolate between horizons for full 72-hour forecast
         future_predictions = []
         for hour in range(1, 73):
             if hour in horizon_predictions:
-                # Direct prediction available
                 future_predictions.append(horizon_predictions[hour])
             else:
-                # Interpolate between nearest horizons
                 lower_h = max([h for h in forecast_horizons if h < hour])
                 upper_h = min([h for h in forecast_horizons if h > hour])
                 
-                # Linear interpolation
                 weight = (hour - lower_h) / (upper_h - lower_h)
                 interpolated = (1 - weight) * horizon_predictions[lower_h] + weight * horizon_predictions[upper_h]
                 future_predictions.append(float(interpolated))
@@ -201,6 +233,9 @@ def predict_aqi():
         }
         
     except Exception as e:
+        import traceback
+        print(f"[ERROR] {str(e)}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
 
 if __name__ == "__main__":

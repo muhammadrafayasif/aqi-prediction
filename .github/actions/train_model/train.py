@@ -13,22 +13,23 @@ load_dotenv()
 # Load data from Hopsworks
 project = hopsworks.login(api_key_value=os.getenv("API_KEY"))
 fs = project.get_feature_store()
-fg = fs.get_or_create_feature_group("aqi_feature_pipeline", version=1)
+fg = fs.get_or_create_feature_group("aqi_feature_pipeline", version=2, online_enabled=True, primary_key=['timestamp_str'])
 df = fg.read()
 
 df["timestamp"] = pd.to_datetime(df["timestamp"])
 df = df.sort_values("timestamp").reset_index(drop=True)
 
-# Detect gaps on the original data (hours between samples)
+# Detect gaps in the original data
 orig_time_diff = df['timestamp'].diff().dt.total_seconds().div(3600)
-gap_mask_orig = (orig_time_diff > 1)
+real_gaps = orig_time_diff > 2  # Skip only real outages
+gap_mask_orig = real_gaps
 gap_start_timestamps = df.loc[gap_mask_orig, 'timestamp'].tolist()
 
 # Reindex to a complete hourly time range
 full_index = pd.date_range(start=df['timestamp'].min(), end=df['timestamp'].max(), freq='h')
 df_reindexed = df.set_index('timestamp').reindex(full_index).rename_axis('timestamp').reset_index()
 
-# Mark where gaps start
+# Mark where real gaps start
 df_reindexed['gap_flag'] = 0
 for ts in gap_start_timestamps:
     df_reindexed.loc[df_reindexed['timestamp'] == ts, 'gap_flag'] = 1
@@ -55,16 +56,10 @@ df_reindexed[pollutant_cols] = df_reindexed[pollutant_cols].rolling(3, min_perio
 for col in pollutant_cols:
     df_reindexed[col] = np.clip(df_reindexed[col], 0, 500)
 
-# Remove rows near gaps to prevent lag contamination
+# Remove rows with real gaps (outages > 2 hours) - don't remove n_lags rows after
+# With online store, maintenance gaps are not data loss
 n_lags = 12
-df_reindexed['hours_since_gap'] = 9999  # default "no gap"
-
-gap_indices = df_reindexed.index[df_reindexed['gap_flag'] == 1].tolist()
-for gidx in gap_indices:
-    end_idx = min(gidx + n_lags, len(df_reindexed) - 1)
-    df_reindexed.loc[gidx:end_idx, 'hours_since_gap'] = np.arange(0, end_idx - gidx + 1)
-
-df_clean = df_reindexed[df_reindexed['hours_since_gap'] > n_lags].copy().reset_index(drop=True)
+df_clean = df_reindexed[~(df_reindexed['gap_flag'] == 1)].copy().reset_index(drop=True)
 
 df = df_clean
 
@@ -93,17 +88,8 @@ for col in all_cols:
     df[f"{col}_roll6"] = df[[f"{col}_lag{i}" for i in range(1, 7)]].mean(axis=1)
     df[f"{col}_roll12"] = df[[f"{col}_lag{i}" for i in range(1, 13)]].mean(axis=1)
 
-# Mark and remove gap-contaminated rows
-df['hours_since_gap'] = 0
-gap_indices = df[df['gap_flag'] == 1].index
-for idx in gap_indices:
-    end_idx = min(idx + n_lags + 1, len(df))
-    df.loc[idx:end_idx, 'hours_since_gap'] = range(end_idx - idx)
-
-df_clean = df[df['hours_since_gap'] == 0].copy()
-df_clean = df_clean.dropna().reset_index(drop=True)
-
-df = df_clean
+# Drop rows with NaN from lag creation
+df = df.dropna().reset_index(drop=True)
 
 # Calculate splits
 n_samples = len(df)
@@ -113,12 +99,10 @@ total_hours = n_samples
 total_days = total_hours / 24
 
 # Adaptive split strategy based on data size
-# The dataset will use a different algorithm based on its size
-# As of now (9/11/2025), the model will use proportianal time splits
 if total_days < 90:
     # Small dataset - use proportional time splits
-    test_days = max(3, int(total_days * 0.15))  # 15% or 3 days minimum
-    val_days = max(3, int(total_days * 0.15))   # 15% or 3 days minimum
+    test_days = max(3, int(total_days * 0.15))
+    val_days = max(3, int(total_days * 0.15))
     
     HOURS_FOR_TEST = test_days * 24
     HOURS_FOR_VAL = val_days * 24
@@ -159,7 +143,7 @@ models = {}
 metrics_history = {}
 
 feature_cols = [col for col in df.columns if col not in 
-                ['timestamp', 'aqi', 'time_diff', 'gap_flag', 'hours_since_gap'] + pollutant_cols]
+                ['timestamp', 'aqi', 'time_diff', 'gap_flag'] + pollutant_cols]
 
 for horizon in forecast_horizons:
     max_idx = len(df) - horizon

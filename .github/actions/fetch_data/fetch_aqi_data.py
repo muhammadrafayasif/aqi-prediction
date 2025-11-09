@@ -16,8 +16,9 @@ fs = project.get_feature_store()
 # Get or create a feature group containing our features for AQI prediction
 fg = fs.get_or_create_feature_group(
     name="aqi_feature_pipeline",
-    version=1,
-    primary_key=["timestamp"],
+    version=2,
+    online_enabled=True,
+    primary_key=["timestamp_str"],
     description="A feature pipeline for storing AQI, environmental pollutants and weather data to the feature store."
 )
 
@@ -105,6 +106,9 @@ with sync_playwright() as p:
 
     for n, i in enumerate(cards):
         data[weather[n]] = round(float(re.findall(r'\d+', i)[0]), 1)
+
+    # Add timestamp_str as primary key for online feature store
+    data['timestamp_str'] = pd.to_datetime(data["timestamp"]).astype("int64") // 10**9
 
     # Convert python dictionary to Pandas DataFrame
     row = pd.DataFrame([data])
