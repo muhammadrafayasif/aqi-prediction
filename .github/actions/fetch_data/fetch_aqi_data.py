@@ -2,6 +2,7 @@ from playwright.sync_api import sync_playwright
 from datetime import datetime
 from dotenv import load_dotenv
 import pandas as pd
+import numpy as np
 import re, os, hopsworks
 
 # Load .env variables to communicate with HopsWorks
@@ -107,11 +108,11 @@ with sync_playwright() as p:
     for n, i in enumerate(cards):
         data[weather[n]] = round(float(re.findall(r'\d+', i)[0]), 1)
 
-    # Add timestamp_str as primary key for online feature store
-    data['timestamp_str'] = pd.to_datetime(data["timestamp"]).astype("int64") // 10**9
-
     # Convert python dictionary to Pandas DataFrame
     row = pd.DataFrame([data])
+
+    # Add timestamp_str as primary key for online feature store
+    row['timestamp_str'] = np.int32(data["timestamp"].timestamp())
 
     # Append current data to our feature store
     fg.insert(row, wait=True)
