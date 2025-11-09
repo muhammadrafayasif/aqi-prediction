@@ -1,10 +1,11 @@
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
-import os
-import hopsworks
-import joblib
+from warnings import simplefilter
+import os, hopsworks, joblib
 import pandas as pd
 import numpy as np
+
+simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 
 app = FastAPI(title="AQI Forecast API", version="1.0")
 

@@ -108,7 +108,7 @@ for horizon in forecast_horizons:
         learning_rate=0.05,
         subsample=0.8,
         colsample_bytree=0.8,
-        objective='reg:squarederror',
+        objective='reg:gamma',
         random_state=42
     )
     model.fit(X_train, y_train, 
@@ -117,6 +117,7 @@ for horizon in forecast_horizons:
     
     # Evaluate
     y_pred_test = model.predict(X_test)
+    y_pred_test = np.clip(y_pred_test, 0, 500)
     mae = mean_absolute_error(y_test, y_pred_test)
     rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
     
