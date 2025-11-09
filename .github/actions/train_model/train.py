@@ -23,17 +23,13 @@ df = df.sort_values("timestamp").reset_index(drop=True)
 full_index = pd.date_range(start=df['timestamp'].min(), end=df['timestamp'].max(), freq='h')
 df = df.set_index('timestamp').reindex(full_index).rename_axis('timestamp').reset_index()
 
-# Fill missing values and create gap flag
+# Define column groups
 weather_cols = ['temp','wind_speed','wind_gusts','humidity_percent','dew_point','pressure','cloud_cover','visibility']
 pollutant_cols = ['pm_10','pm_2_5','no_2','o_3','so_2','co','aqi']
 
 # Set timestamp as index temporarily
 df = df.set_index('timestamp')
-
-# Interpolate weather features using time
-df[weather_cols] = df[weather_cols].interpolate(method='time')
-
-# Reset index to make timestamp a column again
+df[weather_cols] = df[weather_cols].interpolate(method='time', limit_direction='both')
 df = df.reset_index()
 
 # Fill pollutants using forward fill + rolling mean
@@ -48,15 +44,6 @@ df['gap_flag'] = df['gap_flag'].fillna(0)
 n_lags = 12
 all_cols = pollutant_cols + weather_cols
 
-for col in all_cols:
-    for lag in range(1, n_lags+1):
-        df[f"{col}_lag{lag}"] = df[col].shift(lag)
-
-for col in all_cols:
-    df[f"{col}_roll3"] = df[col].rolling(window=3).mean()
-    df[f"{col}_roll6"] = df[col].rolling(window=6).mean()
-    df[f"{col}_roll12"] = df[col].rolling(window=12).mean()
-
 # Time-based features
 df['hour'] = df['timestamp'].dt.hour
 df['day_of_week'] = df['timestamp'].dt.dayofweek
@@ -66,13 +53,32 @@ df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
 
 # Add month and season for distribution shift handling
 df['month'] = df['timestamp'].dt.month
-df['season'] = df['timestamp'].dt.month % 12 // 3 + 1  # 1=Winter, 2=Spring, 3=Summer, 4=Fall
+df['season'] = df['timestamp'].dt.month % 12 // 3 + 1
 
-# Drop rows with NaNs in lags
-df = df.dropna().reset_index(drop=True)
-print(f"Data shape after feature engineering: {df.shape}")
+# Lag features
+for col in all_cols:
+    for lag in range(1, n_lags+1):
+        df[f"{col}_lag{lag}"] = df[col].shift(lag)
 
-# Use adaptive splits based on data size
+# Rolling features from LAGS only
+for col in all_cols:
+    df[f"{col}_roll3"] = df[[f"{col}_lag{i}" for i in range(1, 4)]].mean(axis=1)
+    df[f"{col}_roll6"] = df[[f"{col}_lag{i}" for i in range(1, 7)]].mean(axis=1)
+    df[f"{col}_roll12"] = df[[f"{col}_lag{i}" for i in range(1, 13)]].mean(axis=1)
+
+# Mark and remove gap-contaminated rows
+df['hours_since_gap'] = 0
+gap_indices = df[df['gap_flag'] == 1].index
+for idx in gap_indices:
+    end_idx = min(idx + n_lags + 1, len(df))
+    df.loc[idx:end_idx, 'hours_since_gap'] = range(end_idx - idx)
+
+df_clean = df[df['hours_since_gap'] == 0].copy()
+df_clean = df_clean.dropna().reset_index(drop=True)
+
+df = df_clean
+
+# Calculate splits
 n_samples = len(df)
 
 # Calculate total days of data available
@@ -114,55 +120,41 @@ else:
 
 # Validate splits
 if train_end_idx <= train_start_idx:
-    raise ValueError(f"Not enough data for training! Need at least 2 days of data. Current: {total_days:.1f} days")
+    raise ValueError(f"Not enough data for training")
 if val_start_idx >= test_start_idx:
-    raise ValueError(f"Not enough data for validation! Need at least {total_days/7:.1f} more days of data.")
+    raise ValueError(f"Not enough data for validation")
 if test_start_idx >= n_samples:
-    raise ValueError(f"Not enough data for testing! Need at least {total_days/7:.1f} more days of data.")
+    raise ValueError(f"Not enough data for testing")
 
 # Train separate models for different horizons
 forecast_horizons = [1, 6, 12, 24, 48, 72]
 models = {}
 metrics_history = {}
 
-feature_cols = [col for col in df.columns if col not in ['timestamp', 'aqi', 'time_diff']]
+feature_cols = [col for col in df.columns if col not in 
+                ['timestamp', 'aqi', 'time_diff', 'gap_flag', 'hours_since_gap'] + pollutant_cols]
 
-print(f"\nTraining models for different horizons...")
 for horizon in forecast_horizons:
-    # Create dataset for this horizon
-    X_list, y_list = [], []
-    for i in range(len(df) - horizon):
-        X_list.append(df[feature_cols].iloc[i].values)
-        y_list.append(df['aqi'].iloc[i + horizon])
+    max_idx = len(df) - horizon
     
-    X = np.array(X_list)
-    y = np.array(y_list)
+    X = df[feature_cols].iloc[:max_idx].values
+    y = df['aqi'].iloc[horizon:].values[:max_idx]
     
-    # Apply rolling window split
     X_train = X[train_start_idx:train_end_idx]
     y_train = y[train_start_idx:train_end_idx]
     X_val = X[val_start_idx:test_start_idx]
     y_val = y[val_start_idx:test_start_idx]
-    X_test = X[test_start_idx:]
-    y_test = y[test_start_idx:]
+    X_test = X[test_start_idx:max_idx]
+    y_test = y[test_start_idx:max_idx]
     
     # Validate that we have data
     if len(X_train) == 0:
-        raise ValueError(f"Training set is empty for {horizon}h horizon!")
-    if len(X_val) == 0:
-        print(f"  WARNING: Validation set is empty for {horizon}h horizon. Skipping validation.")
-        use_validation = False
-    else:
-        use_validation = True
-    if len(X_test) == 0:
-        print(f"  WARNING: Test set is empty for {horizon}h horizon. Skipping testing.")
-        use_test = False
-    else:
-        use_test = True
+        raise ValueError(f"Training set empty for {horizon}h horizon")
     
-    # Add sample weights to emphasize recent data ======
-    # More recent data gets higher weight (only if enough training data)
-    if len(y_train) > 24:  # Only use weights if we have at least 24 hours of data
+    use_validation = len(X_val) > 0
+    use_test = len(X_test) > 0
+    
+    if len(y_train) > 24:
         train_indices = np.arange(len(y_train))
         sample_weights = np.exp(train_indices / len(train_indices)) / np.e
         sample_weights = sample_weights / sample_weights.mean()
@@ -171,18 +163,18 @@ for horizon in forecast_horizons:
     
     # Tuned XGBRegressor
     model = xgb.XGBRegressor(
-        n_estimators=300,
+        n_estimators=400,
         max_depth=4,
-        learning_rate=0.03,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        min_child_weight=3,
-        gamma=0.1,
-        reg_alpha=0.1,
-        reg_lambda=1.0,
+        learning_rate=0.02,
+        subsample=0.7,
+        colsample_bytree=0.7,
+        min_child_weight=5,
+        gamma=0.2,
+        reg_alpha=0.2,
+        reg_lambda=2.0,
         objective='reg:squarederror',
         random_state=42,
-        early_stopping_rounds=30 if use_validation else None
+        early_stopping_rounds=50 if use_validation else None
     )
     
     # Prepare eval_set
