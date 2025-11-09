@@ -173,7 +173,7 @@ if test_start_idx >= n_samples:
     raise ValueError(f"Not enough data for testing")
 
 # Train separate models for different horizons
-forecast_horizons = [1, 6, 12, 24, 48, 72]
+forecast_horizons = forecast_horizons = [1, 2, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48, 51, 54, 57, 60, 63, 66, 69, 72]
 models = {}
 metrics_history = {}
 
