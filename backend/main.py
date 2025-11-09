@@ -1,7 +1,7 @@
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
 from warnings import simplefilter
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import os, hopsworks, joblib
 import pandas as pd
 import numpy as np
@@ -149,7 +149,8 @@ def prepare_features(df, debug=False):
 
     # Drop rows with any NaN from lag creation
     df_before_drop = len(df)
-    df = df.dropna().reset_index(drop=True)
+    lag_cols = [f"{col}_lag{i}" for col in (pollutant_cols + weather_cols) for i in range(1, metadata['n_lags']+1)]
+    df = df.dropna(subset=lag_cols).reset_index(drop=True)
     
     # Forward-fill remaining NaN from lag creation (handles edge cases at boundaries)
     df = df.bfill().ffill()
@@ -178,7 +179,9 @@ def predict_aqi():
         project = hopsworks.login(api_key_value=os.getenv("HOPSWORKS_API_KEY"))
         fs = project.get_feature_store()
         fg = fs.get_feature_group("aqi_feature_pipeline", version=2)
-        df = fg.read()
+        cutoff_date = datetime.now() - timedelta(days=30)
+        query = fg.select("*").filter(fg.timestamp >= cutoff_date)
+        df = query.read()
         
         # Parse timestamp
         df["timestamp"] = pd.to_datetime(df["timestamp"])

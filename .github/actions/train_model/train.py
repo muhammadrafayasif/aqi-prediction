@@ -4,6 +4,7 @@ import numpy as np
 import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
 import hopsworks
 from warnings import simplefilter
 
@@ -14,7 +15,9 @@ load_dotenv()
 project = hopsworks.login(api_key_value=os.getenv("API_KEY"))
 fs = project.get_feature_store()
 fg = fs.get_or_create_feature_group("aqi_feature_pipeline", version=2, online_enabled=True, primary_key=['timestamp_str'])
-df = fg.read()
+cutoff_date = datetime.now() - timedelta(days=30)
+query = fg.select("*").filter(fg.timestamp >= cutoff_date)
+df = query.read()
 
 df["timestamp"] = pd.to_datetime(df["timestamp"])
 df = df.sort_values("timestamp").reset_index(drop=True)
