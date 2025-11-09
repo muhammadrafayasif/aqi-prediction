@@ -117,8 +117,9 @@ for col in all_cols:
     df[f"{col}_roll6"] = df[[f"{col}_lag{i}" for i in range(1, 7)]].mean(axis=1)
     df[f"{col}_roll12"] = df[[f"{col}_lag{i}" for i in range(1, 13)]].mean(axis=1)
 
-# Drop rows with NaN from lag creation
-df = df.dropna().reset_index(drop=True)
+# Drop rows that lack full lag history
+lag_cols = [f"{col}_lag{i}" for col in (pollutant_cols + weather_cols) for i in range(1, n_lags+1)]
+df = df.dropna(subset=lag_cols).reset_index(drop=True)
 
 # Forward-fill remaining NaN from lag creation (handles edge cases at boundaries)
 df = df.bfill().ffill()
@@ -175,7 +176,7 @@ models = {}
 metrics_history = {}
 
 feature_cols = [col for col in df.columns if col not in 
-                ['timestamp', 'aqi', 'time_diff', 'gap_flag'] + pollutant_cols]
+                ['timestamp', 'aqi', 'time_diff', 'gap_flag', 'skip_row'] + pollutant_cols]
 
 for horizon in forecast_horizons:
     max_idx = len(df) - horizon
