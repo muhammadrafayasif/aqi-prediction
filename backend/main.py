@@ -22,7 +22,8 @@ try:
     
     # Load model from registry
     model_registry = project.get_model_registry()
-    model_meta = model_registry.get_model("aqi_forecast_xgboost")
+    models = model_registry.get_models("aqi_forecast_xgboost")
+    model_meta = max(models, key=lambda m: m.version)
     model_dir = model_meta.download()
     
     # Load model artifacts
@@ -125,7 +126,6 @@ def predict_aqi():
         # Get latest observation
         last_row = df_processed.iloc[-1]
         current_timestamp = last_row['timestamp']
-        current_aqi = float(last_row['aqi'])
         
         # Prepare feature row
         feature_row = last_row[feature_cols].values.reshape(1, -1)
