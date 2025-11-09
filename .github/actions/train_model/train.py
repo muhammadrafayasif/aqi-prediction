@@ -19,29 +19,53 @@ df = fg.read()
 df["timestamp"] = pd.to_datetime(df["timestamp"])
 df = df.sort_values("timestamp").reset_index(drop=True)
 
-# Handle missing timestamps (hourly frequency)
-full_index = pd.date_range(start=df['timestamp'].min(), end=df['timestamp'].max(), freq='h')
-df = df.set_index('timestamp').reindex(full_index).rename_axis('timestamp').reset_index()
+# Detect gaps on the original data (hours between samples)
+orig_time_diff = df['timestamp'].diff().dt.total_seconds().div(3600)
+gap_mask_orig = (orig_time_diff > 1)
+gap_start_timestamps = df.loc[gap_mask_orig, 'timestamp'].tolist()
 
-# Define column groups
-weather_cols = ['temp','wind_speed','wind_gusts','humidity_percent','dew_point','pressure','cloud_cover','visibility']
+# Reindex to a complete hourly time range
+full_index = pd.date_range(start=df['timestamp'].min(), end=df['timestamp'].max(), freq='h')
+df_reindexed = df.set_index('timestamp').reindex(full_index).rename_axis('timestamp').reset_index()
+
+# Mark where gaps start
+df_reindexed['gap_flag'] = 0
+for ts in gap_start_timestamps:
+    df_reindexed.loc[df_reindexed['timestamp'] == ts, 'gap_flag'] = 1
+
+# Define feature column groups
+weather_cols = ['temp','wind_speed','wind_gusts','humidity_percent',
+                'dew_point','pressure','cloud_cover','visibility']
 pollutant_cols = ['pm_10','pm_2_5','no_2','o_3','so_2','co','aqi']
 
-# Set timestamp as index temporarily
-df = df.set_index('timestamp')
-df[weather_cols] = df[weather_cols].interpolate(method='time', limit_direction='both')
-df = df.reset_index()
+# Causal imputation
+df_reindexed = df_reindexed.set_index("timestamp")
 
-# Fill pollutants using forward fill + rolling mean
-df[pollutant_cols] = df[pollutant_cols].ffill().rolling(3, min_periods=1).mean()
+df_reindexed[weather_cols] = df_reindexed[weather_cols].interpolate(
+    method='time', limit_direction='forward'
+)
+df_reindexed[weather_cols] = df_reindexed[weather_cols].ffill().bfill()
 
-# Detect gaps
-df['time_diff'] = df['timestamp'].diff().dt.total_seconds().div(3600)
-df['gap_flag'] = (df['time_diff'] > 1).astype(int)
-df['gap_flag'] = df['gap_flag'].fillna(0)
+df_reindexed = df_reindexed.reset_index()
+
+# Pollutants: forward-fill and lightly smooth
+df_reindexed[pollutant_cols] = df_reindexed[pollutant_cols].ffill()
+df_reindexed[pollutant_cols] = df_reindexed[pollutant_cols].rolling(3, min_periods=1).mean()
+
+# Remove rows near gaps to prevent lag contamination
+n_lags = 12
+df_reindexed['hours_since_gap'] = 9999  # default "no gap"
+
+gap_indices = df_reindexed.index[df_reindexed['gap_flag'] == 1].tolist()
+for gidx in gap_indices:
+    end_idx = min(gidx + n_lags, len(df_reindexed) - 1)
+    df_reindexed.loc[gidx:end_idx, 'hours_since_gap'] = np.arange(0, end_idx - gidx + 1)
+
+df_clean = df_reindexed[df_reindexed['hours_since_gap'] > n_lags].copy().reset_index(drop=True)
+
+df = df_clean
 
 # Create lag and rolling features
-n_lags = 12
 all_cols = pollutant_cols + weather_cols
 
 # Time-based features
