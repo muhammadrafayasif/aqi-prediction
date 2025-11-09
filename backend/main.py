@@ -176,15 +176,15 @@ def predict_aqi():
     
     try:
         # Connect to Hopsworks and load data
-        project = hopsworks.login(api_key_value=os.getenv("HOPSWORKS_API_KEY"))
+        project = hopsworks.login(api_key_value=os.getenv("API_KEY"))
         fs = project.get_feature_store()
         fg = fs.get_feature_group("aqi_feature_pipeline", version=2)
-        cutoff_date = datetime.now() - timedelta(days=30)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
         query = fg.select("*").filter(fg.timestamp >= cutoff_date)
         df = query.read()
         
         # Parse timestamp
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
         
         # Prepare features
         df_processed = prepare_features(df, debug=False)

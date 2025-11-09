@@ -4,7 +4,7 @@ import numpy as np
 import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hopsworks
 from warnings import simplefilter
 
@@ -15,12 +15,11 @@ load_dotenv()
 project = hopsworks.login(api_key_value=os.getenv("API_KEY"))
 fs = project.get_feature_store()
 fg = fs.get_or_create_feature_group("aqi_feature_pipeline", version=2, online_enabled=True, primary_key=['timestamp_str'])
-cutoff_date = datetime.now() - timedelta(days=30)
+cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
 query = fg.select("*").filter(fg.timestamp >= cutoff_date)
 df = query.read()
 
-df["timestamp"] = pd.to_datetime(df["timestamp"])
-df = df.sort_values("timestamp").reset_index(drop=True)
+df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
 
 # Remove duplicate timestamps (keep the last one)
 df = df.drop_duplicates(subset=['timestamp'], keep='last').reset_index(drop=True)
