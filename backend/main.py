@@ -46,6 +46,9 @@ except Exception as e:
 def prepare_features(df, debug=False):
     df = df.sort_values("timestamp").reset_index(drop=True)
     
+    # Remove duplicate timestamps (keep the last one)
+    df = df.drop_duplicates(subset=['timestamp'], keep='last').reset_index(drop=True)
+    
     if debug:
         print(f"\n[DEBUG] Initial rows: {len(df)}")
         print(f"[DEBUG] Date range: {df['timestamp'].min()} to {df['timestamp'].max()}")
@@ -91,11 +94,28 @@ def prepare_features(df, debug=False):
     for col in pollutant_cols:
         df_reindexed[col] = np.clip(df_reindexed[col], 0, 500)
 
-    # Remove only rows with gaps
-    df_reindexed = df_reindexed[~(df_reindexed['gap_flag'] == 1)].copy().reset_index(drop=True)
+    # Remove if gap is very large (> 24 hours)
+    gap_threshold_hours = 24
+
+    # Compute time differences in hours
+    orig_time_diff = df_reindexed["timestamp"].diff().dt.total_seconds() / 3600
+    orig_time_diff = orig_time_diff.fillna(0)
+
+    # Detect large gaps
+    large_gaps = orig_time_diff > gap_threshold_hours
+    large_gap_timestamps = df_reindexed.loc[large_gaps, "timestamp"].tolist()
+
+    # Mark and filter
+    df_reindexed["skip_row"] = 0
+    df_reindexed.loc[df_reindexed["timestamp"].isin(large_gap_timestamps), "skip_row"] = 1
+
+    # Drop skipped rows
+    df_reindexed = df_reindexed[df_reindexed["skip_row"] == 0].copy().reset_index(drop=True)
+    df_reindexed = df_reindexed.drop("skip_row", axis=1)
+
     
     if debug:
-        print(f"[DEBUG] After gap filtering: {len(df_reindexed)} rows")
+        print(f"[DEBUG] After gap filtering (> {gap_threshold_hours}h only): {len(df_reindexed)} rows")
 
     df = df_reindexed
 
@@ -130,6 +150,9 @@ def prepare_features(df, debug=False):
     # Drop rows with any NaN from lag creation
     df_before_drop = len(df)
     df = df.dropna().reset_index(drop=True)
+    
+    # Forward-fill remaining NaN from lag creation (handles edge cases at boundaries)
+    df = df.bfill().ffill()
     
     if debug:
         print(f"[DEBUG] Rows before dropna: {df_before_drop}, after: {len(df)}")

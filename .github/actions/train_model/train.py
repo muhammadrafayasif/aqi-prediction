@@ -19,9 +19,12 @@ df = fg.read()
 df["timestamp"] = pd.to_datetime(df["timestamp"])
 df = df.sort_values("timestamp").reset_index(drop=True)
 
-# Detect gaps in the original data
+# Remove duplicate timestamps (keep the last one)
+df = df.drop_duplicates(subset=['timestamp'], keep='last').reset_index(drop=True)
+
+# Detect gaps in the original data (only real outages > 2 hours, not maintenance windows)
 orig_time_diff = df['timestamp'].diff().dt.total_seconds().div(3600)
-real_gaps = orig_time_diff > 2  # Skip only real outages
+real_gaps = orig_time_diff > 2  # Skip only real outages, not 2-3h maintenance gaps
 gap_mask_orig = real_gaps
 gap_start_timestamps = df.loc[gap_mask_orig, 'timestamp'].tolist()
 
@@ -56,10 +59,36 @@ df_reindexed[pollutant_cols] = df_reindexed[pollutant_cols].rolling(3, min_perio
 for col in pollutant_cols:
     df_reindexed[col] = np.clip(df_reindexed[col], 0, 500)
 
-# Remove rows with real gaps (outages > 2 hours) - don't remove n_lags rows after
-# With online store, maintenance gaps are not data loss
+# Remove rows with gaps
 n_lags = 12
-df_clean = df_reindexed[~(df_reindexed['gap_flag'] == 1)].copy().reset_index(drop=True)
+
+# Compute time differences in hours
+orig_time_diff = df_reindexed["timestamp"].diff().dt.total_seconds() / 3600
+
+# Align the Series with the DataFrame (fill first NaN with 0)
+orig_time_diff = orig_time_diff.fillna(0)
+
+# Identify large gaps
+large_gaps = orig_time_diff > 24
+
+large_gap_timestamps = df_reindexed.loc[large_gaps, "timestamp"].tolist()
+
+# Mark and remove skipped rows
+df_reindexed["skip_row"] = 0
+df_reindexed.loc[df_reindexed["timestamp"].isin(large_gap_timestamps), "skip_row"] = 1
+
+df_clean = df_reindexed[df_reindexed["skip_row"] == 0].copy().reset_index(drop=True)
+df_clean = df_clean.drop("skip_row", axis=1)
+
+# Always keep the last row even if there's a small gap
+if not df_clean.empty and not df_reindexed.empty:
+    last_row = df_reindexed.iloc[-1]
+    if last_row["skip_row"] == 0 and last_row["timestamp"] not in df_clean["timestamp"].values:
+        df_clean = (
+            pd.concat([df_clean, df_reindexed.iloc[[-1]]], ignore_index=True)
+            .sort_values("timestamp")
+            .reset_index(drop=True)
+        )
 
 df = df_clean
 
@@ -90,6 +119,9 @@ for col in all_cols:
 
 # Drop rows with NaN from lag creation
 df = df.dropna().reset_index(drop=True)
+
+# Forward-fill remaining NaN from lag creation (handles edge cases at boundaries)
+df = df.bfill().ffill()
 
 # Calculate splits
 n_samples = len(df)
