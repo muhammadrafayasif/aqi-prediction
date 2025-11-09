@@ -52,6 +52,9 @@ df_reindexed = df_reindexed.reset_index()
 df_reindexed[pollutant_cols] = df_reindexed[pollutant_cols].ffill()
 df_reindexed[pollutant_cols] = df_reindexed[pollutant_cols].rolling(3, min_periods=1).mean()
 
+for col in pollutant_cols:
+    df_reindexed[col] = np.clip(df_reindexed[col], 0, 500)
+
 # Remove rows near gaps to prevent lag contamination
 n_lags = 12
 df_reindexed['hours_since_gap'] = 9999  # default "no gap"
@@ -178,18 +181,11 @@ for horizon in forecast_horizons:
     use_validation = len(X_val) > 0
     use_test = len(X_test) > 0
     
-    if len(y_train) > 24:
-        train_indices = np.arange(len(y_train))
-        sample_weights = np.exp(train_indices / len(train_indices)) / np.e
-        sample_weights = sample_weights / sample_weights.mean()
-    else:
-        sample_weights = None
-    
     # Tuned XGBRegressor
     model = xgb.XGBRegressor(
         n_estimators=400,
         max_depth=4,
-        learning_rate=0.02,
+        learning_rate=0.06,
         subsample=0.7,
         colsample_bytree=0.7,
         min_child_weight=5,
@@ -198,7 +194,7 @@ for horizon in forecast_horizons:
         reg_lambda=2.0,
         objective='reg:squarederror',
         random_state=42,
-        early_stopping_rounds=50 if use_validation else None
+        early_stopping_rounds=30 if use_validation else None
     )
     
     # Prepare eval_set
@@ -206,7 +202,6 @@ for horizon in forecast_horizons:
     
     model.fit(
         X_train, y_train,
-        sample_weight=sample_weights,
         eval_set=eval_set,
         verbose=False
     )
