@@ -34,7 +34,6 @@ try:
     metadata = model_artifacts['metadata']
     
     print(f"Model loaded successfully!")
-    print(f"Training date: {metadata['training_date']}")
     print(f"Features: {metadata['feature_count']}")
     print(f"Horizons: {forecast_horizons}")
     
@@ -85,6 +84,8 @@ def prepare_features(df):
         df[f"{col}_roll12"] = df[col].rolling(window=12).mean()
     
     # Time-based features
+    df['month'] = df['timestamp'].dt.month
+    df['season'] = df['timestamp'].dt.month % 12 // 3 + 1
     df['hour'] = df['timestamp'].dt.hour
     df['day_of_week'] = df['timestamp'].dt.dayofweek
     df['is_weekend'] = df['day_of_week'].isin([5,6]).astype(int)
