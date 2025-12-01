@@ -14,7 +14,7 @@ load_dotenv()
 # Load data from Hopsworks
 project = hopsworks.login(api_key_value=os.getenv("API_KEY"))
 fs = project.get_feature_store()
-fg = fs.get_or_create_feature_group("aqi_feature_pipeline", version=2, online_enabled=True, primary_key=['timestamp_str'])
+fg = fs.get_or_create_feature_group("aqi_feature_pipeline", version=3, online_enabled=True, primary_key=['timestamp_str'])
 cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
 query = fg.select("*").filter(fg.timestamp >= cutoff_date)
 df = query.read()

@@ -17,7 +17,7 @@ fs = project.get_feature_store()
 # Get or create a feature group containing our features for AQI prediction
 fg = fs.get_or_create_feature_group(
     name="aqi_feature_pipeline",
-    version=2,
+    version=3,
     online_enabled=True,
     primary_key=["timestamp_str"],
     description="A feature pipeline for storing AQI, environmental pollutants and weather data to the feature store."
