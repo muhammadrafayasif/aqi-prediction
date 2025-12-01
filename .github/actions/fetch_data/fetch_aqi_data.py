@@ -62,7 +62,8 @@ with sync_playwright() as p:
     names = ['pm_10', 'pm_2_5', 'no_2', 'o_3', 'so_2', 'co']
 
     # Add current data and time to the new dataframe
-    data['timestamp'] = datetime.now().replace(minute=0, second=0, microsecond=0)
+    CURRENT_TIMESTAMP = datetime.now().replace(minute=0, second=0, microsecond=0)
+    data['timestamp'] = str(CURRENT_TIMESTAMP)
 
     # Add current AQI to the new dataframe
     AQI = page.locator('.aq-number').first
@@ -112,7 +113,7 @@ with sync_playwright() as p:
     row = pd.DataFrame([data])
 
     # Add timestamp_str as primary key for online feature store
-    row['timestamp_str'] = np.int32(data["timestamp"].timestamp())
+    row['timestamp_str'] = np.int64(CURRENT_TIMESTAMP.timestamp())
 
     # Append current data to our feature store
     fg.insert(row, wait=True)
