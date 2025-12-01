@@ -19,7 +19,8 @@ cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
 query = fg.select("*").filter(fg.timestamp >= cutoff_date)
 df = query.read(online=False)
 
-df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+df = df[df["timestamp"].apply(lambda x: x.tzinfo is not None)]
 
 # Remove duplicate timestamps (keep the last one)
 df = df.drop_duplicates(subset=['timestamp'], keep='last').reset_index(drop=True)
